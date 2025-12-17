@@ -209,6 +209,42 @@ export default function CheckInPage({
       )
 
       clearTimeout(timeoutId)
+
+      // 카메라가 실제로 시작되었는지 확인 (iOS에서 중요)
+      await new Promise(resolve => setTimeout(resolve, 500)) // 짧은 대기
+      
+      // reader 요소 내부에 video 요소가 있는지 확인
+      const readerElement = document.getElementById('reader')
+      if (readerElement) {
+        const videoElement = readerElement.querySelector('video')
+        if (!videoElement) {
+          throw new Error('카메라 비디오 요소를 찾을 수 없습니다. 카메라가 시작되지 않았을 수 있습니다.')
+        }
+        
+        // 비디오가 실제로 재생 중인지 확인
+        if (videoElement.readyState === 0 || videoElement.paused) {
+          console.warn('Video element found but not playing, waiting...')
+          await new Promise(resolve => setTimeout(resolve, 1000))
+          
+          if (videoElement.readyState === 0 || videoElement.paused) {
+            throw new Error('카메라 비디오 스트림이 시작되지 않았습니다.')
+          }
+        }
+        
+        console.log('Video element confirmed:', {
+          readyState: videoElement.readyState,
+          paused: videoElement.paused,
+          videoWidth: videoElement.videoWidth,
+          videoHeight: videoElement.videoHeight
+        })
+        
+        if (addDebugLogRef.current) {
+          addDebugLogRef.current('info', `비디오 확인: readyState=${videoElement.readyState}, paused=${videoElement.paused}, size=${videoElement.videoWidth}x${videoElement.videoHeight}`)
+        }
+      } else {
+        throw new Error('Reader 요소를 찾을 수 없습니다.')
+      }
+
       setIsScanning(true)
       scannerStartedRef.current = true
       console.log('Scanner started successfully')
@@ -217,9 +253,18 @@ export default function CheckInPage({
       }
     } catch (err: any) {
       console.error('Scanner error:', err)
+      const errorDetails = {
+        name: err.name,
+        message: err.message,
+        stack: err.stack,
+        fullError: JSON.stringify(err, Object.getOwnPropertyNames(err))
+      }
+      
       if (addDebugLogRef.current) {
         addDebugLogRef.current('error', `스캐너 에러: ${err.name || 'Unknown'} - ${err.message || JSON.stringify(err)}`)
+        addDebugLogRef.current('error', `에러 상세: ${JSON.stringify(errorDetails)}`)
       }
+      
       setStatus('error')
       let errorMsg = '카메라를 시작할 수 없습니다.'
       
@@ -229,6 +274,11 @@ export default function CheckInPage({
         errorMsg = '카메라를 찾을 수 없습니다. 카메라가 연결되어 있는지 확인해주세요.'
       } else if (err.name === 'NotReadableError' || err.message?.includes('Could not start video stream')) {
         errorMsg = '카메라에 접근할 수 없습니다. 다른 애플리케이션에서 카메라를 사용 중인지 확인해주세요.'
+      } else if (err.message?.includes('비디오 요소를 찾을 수 없습니다') || err.message?.includes('비디오 스트림이 시작되지 않았습니다')) {
+        errorMsg = '카메라가 시작되었지만 화면에 표시되지 않습니다. 페이지를 새로고침하고 다시 시도해주세요.'
+        if (addDebugLogRef.current) {
+          addDebugLogRef.current('warn', '카메라 스트림 시작 문제 감지 - iOS 브라우저 호환성 문제일 수 있음')
+        }
       } else if (err.message) {
         errorMsg = err.message
       }
@@ -236,6 +286,16 @@ export default function CheckInPage({
       setMessage(errorMsg)
       setIsScanning(false)
       scannerStartedRef.current = false
+      
+      // 스캐너 정리
+      try {
+        if (scannerRef.current) {
+          await scannerRef.current.stop().catch(() => {})
+          await scannerRef.current.clear().catch(() => {})
+        }
+      } catch (cleanupError) {
+        console.log('Cleanup error (ignored):', cleanupError)
+      }
     }
   }
 
