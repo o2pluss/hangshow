@@ -39,10 +39,7 @@ export default function CheckInPage({
   const stopScanner = async () => {
     if (scannerRef.current && scannerStartedRef.current) {
       try {
-        const isScanning = scannerRef.current.getState() === Html5Qrcode.SCAN_STATE.SCANNING
-        if (isScanning) {
-          await scannerRef.current.stop()
-        }
+        await scannerRef.current.stop()
         await scannerRef.current.clear()
       } catch (err) {
         // 스캐너가 이미 정지된 경우 무시
