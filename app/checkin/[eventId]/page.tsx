@@ -57,18 +57,6 @@ export default function CheckInPage({
     await stopScanner()
 
     try {
-      // 카메라 권한 요청
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ 
-          video: { facingMode: 'environment' } 
-        })
-        stream.getTracks().forEach(track => track.stop())
-      } catch (permError) {
-        setStatus('error')
-        setMessage('카메라 권한이 필요합니다. 브라우저 설정에서 카메라 권한을 허용해주세요.')
-        return
-      }
-
       const scanner = new Html5Qrcode('reader')
       scannerRef.current = scanner
 
@@ -76,6 +64,7 @@ export default function CheckInPage({
       const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
       const qrboxSize = isMobile ? Math.min(window.innerWidth * 0.8, 300) : 250
 
+      // Html5Qrcode가 직접 카메라 권한을 요청하도록 함
       await scanner.start(
         { facingMode: 'environment' },
         {
@@ -88,6 +77,7 @@ export default function CheckInPage({
         },
         (errorMessage) => {
           // 스캔 중 에러는 무시 (계속 스캔)
+          console.log('Scan error (ignored):', errorMessage)
         }
       )
 
@@ -98,10 +88,12 @@ export default function CheckInPage({
       setStatus('error')
       let errorMsg = '카메라를 시작할 수 없습니다.'
       
-      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-        errorMsg = '카메라 권한이 거부되었습니다. 브라우저 설정에서 카메라 권한을 허용해주세요.'
-      } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError' || err.message?.includes('Permission denied')) {
+        errorMsg = '카메라 권한이 거부되었습니다. 브라우저 주소창의 카메라 아이콘을 클릭하여 권한을 허용해주세요.'
+      } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError' || err.message?.includes('No camera')) {
         errorMsg = '카메라를 찾을 수 없습니다. 카메라가 연결되어 있는지 확인해주세요.'
+      } else if (err.name === 'NotReadableError' || err.message?.includes('Could not start video stream')) {
+        errorMsg = '카메라에 접근할 수 없습니다. 다른 애플리케이션에서 카메라를 사용 중인지 확인해주세요.'
       } else if (err.message) {
         errorMsg = err.message
       }

@@ -1,21 +1,42 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { Event } from '@/types/database'
 
 export default function Home() {
   const router = useRouter()
-  const [eventId, setEventId] = useState('')
+  const [events, setEvents] = useState<Event[]>([])
+  const [loading, setLoading] = useState(true)
   const [isCreating, setIsCreating] = useState(false)
   const [newEventTitle, setNewEventTitle] = useState('')
   const [newEventDate, setNewEventDate] = useState('')
 
-  const handleGoToEvent = () => {
-    if (eventId.trim()) {
-      router.push(`/event/${eventId.trim()}`)
+  const fetchEvents = async () => {
+    setLoading(true)
+    try {
+      const { data, error } = await supabase
+        .from('events')
+        .select('*')
+        .order('created_at', { ascending: false })
+
+      if (error) {
+        console.error('Error fetching events:', error)
+        return
+      }
+
+      setEvents(data || [])
+    } catch (err) {
+      console.error('Error:', err)
+    } finally {
+      setLoading(false)
     }
   }
+
+  useEffect(() => {
+    fetchEvents()
+  }, [])
 
   const handleCreateEvent = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -40,7 +61,14 @@ export default function Home() {
         throw error
       }
 
-      alert(`행사가 생성되었습니다!\n행사 ID: ${data.id}`)
+      // 행사 목록 새로고침
+      await fetchEvents()
+      
+      // 폼 초기화
+      setNewEventTitle('')
+      setNewEventDate('')
+      
+      alert(`행사가 생성되었습니다!\n행사명: ${data.title}`)
       router.push(`/host/${data.id}`)
     } catch (err: any) {
       alert('행사 생성 중 오류가 발생했습니다: ' + err.message)
@@ -50,7 +78,7 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-2xl mx-auto">
+      <div className="max-w-7xl mx-auto">
         <div className="text-center mb-12">
           <h1 className="text-4xl font-bold text-gray-900 mb-4">
             행사 참석 관리 서비스
@@ -61,43 +89,78 @@ export default function Home() {
         </div>
 
         <div className="space-y-8">
-          {/* 기존 행사 접속 */}
+          {/* 기존 행사 목록 */}
           <div className="bg-white shadow rounded-lg p-8">
             <h2 className="text-2xl font-bold text-gray-900 mb-6">
-              기존 행사 접속
+              등록된 행사 목록
             </h2>
-            <div className="space-y-4">
-              <div>
-                <label
-                  htmlFor="eventId"
-                  className="block text-sm font-medium text-gray-700 mb-2"
-                >
-                  행사 ID 입력
-                </label>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    id="eventId"
-                    value={eventId}
-                    onChange={(e) => setEventId(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && handleGoToEvent()}
-                    placeholder="행사 ID를 입력하세요 (UUID)"
-                    className="flex-1 px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  />
-                  <button
-                    onClick={handleGoToEvent}
-                    className="bg-blue-600 text-white px-6 py-2 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 font-medium"
-                  >
-                    접속
-                  </button>
-                </div>
+            {loading ? (
+              <div className="text-center py-8">
+                <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                <p className="mt-2 text-gray-600">행사 목록을 불러오는 중...</p>
               </div>
-              <div className="text-sm text-gray-500 space-y-1">
-                <p>• 참가자: <code className="bg-gray-100 px-2 py-1 rounded">/event/[행사ID]</code></p>
-                <p>• 호스트: <code className="bg-gray-100 px-2 py-1 rounded">/host/[행사ID]</code></p>
-                <p>• 체크인: <code className="bg-gray-100 px-2 py-1 rounded">/checkin/[행사ID]</code></p>
+            ) : events.length === 0 ? (
+              <div className="text-center py-8 text-gray-500">
+                <p>등록된 행사가 없습니다.</p>
+                <p className="text-sm mt-2">아래에서 새 행사를 생성해주세요.</p>
               </div>
-            </div>
+            ) : (
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                {events.map((event) => {
+                  const eventDate = new Date(event.date)
+                  const formattedDate = eventDate.toLocaleDateString('ko-KR', {
+                    year: 'numeric',
+                    month: 'long',
+                    day: 'numeric',
+                  })
+                  
+                  return (
+                    <div
+                      key={event.id}
+                      className="border border-gray-200 rounded-lg p-6 hover:shadow-md transition-shadow"
+                    >
+                      <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                        {event.title}
+                      </h3>
+                      <p className="text-sm text-gray-600 mb-4">
+                        {formattedDate}
+                      </p>
+                      <div className="flex items-center gap-2 mb-4">
+                        <span
+                          className={`px-2 py-1 text-xs font-medium rounded ${
+                            event.status === 'open'
+                              ? 'bg-green-100 text-green-800'
+                              : 'bg-gray-100 text-gray-800'
+                          }`}
+                        >
+                          {event.status === 'open' ? '진행 중' : '종료'}
+                        </span>
+                      </div>
+                      <div className="flex flex-col gap-2">
+                        <button
+                          onClick={() => router.push(`/event/${event.id}`)}
+                          className="w-full bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 text-sm font-medium"
+                        >
+                          참가자 페이지
+                        </button>
+                        <button
+                          onClick={() => router.push(`/host/${event.id}`)}
+                          className="w-full bg-gray-600 text-white px-4 py-2 rounded-md hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 text-sm font-medium"
+                        >
+                          호스트 대시보드
+                        </button>
+                        <button
+                          onClick={() => router.push(`/checkin/${event.id}`)}
+                          className="w-full bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 text-sm font-medium"
+                        >
+                          체크인
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
           </div>
 
           {/* 새 행사 생성 */}
@@ -156,10 +219,10 @@ export default function Home() {
             </h3>
             <ol className="list-decimal list-inside space-y-2 text-sm text-blue-800">
               <li>위에서 "새 행사 생성"으로 행사를 만듭니다</li>
-              <li>생성된 행사 ID를 복사합니다</li>
-              <li>참가자에게 <code className="bg-blue-100 px-1 rounded">/event/[행사ID]</code> 링크를 공유합니다</li>
-              <li>행사 당일 태블릿에서 <code className="bg-blue-100 px-1 rounded">/checkin/[행사ID]</code>로 체크인합니다</li>
-              <li>호스트는 <code className="bg-blue-100 px-1 rounded">/host/[행사ID]</code>에서 실시간 현황을 확인합니다</li>
+              <li>등록된 행사 목록에서 원하는 행사를 선택합니다</li>
+              <li>참가자 페이지 버튼을 클릭하여 참가자에게 링크를 공유합니다</li>
+              <li>행사 당일 체크인 버튼을 클릭하여 QR 코드로 체크인합니다</li>
+              <li>호스트 대시보드 버튼을 클릭하여 실시간 현황을 확인합니다</li>
             </ol>
           </div>
         </div>
