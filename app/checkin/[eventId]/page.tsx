@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { Html5Qrcode } from 'html5-qrcode'
 import { supabase } from '@/lib/supabase'
@@ -19,6 +19,74 @@ export default function CheckInPage({
   const scannerRef = useRef<Html5Qrcode | null>(null)
   const [isScanning, setIsScanning] = useState(false)
   const scannerStartedRef = useRef(false)
+  const [debugLogs, setDebugLogs] = useState<Array<{ type: 'log' | 'error' | 'warn' | 'info', message: string, timestamp: Date }>>([])
+  const [showDebugPanel, setShowDebugPanel] = useState(false)
+  const isMobileRef = useRef(/iPhone|iPad|iPod|Android/i.test(typeof window !== 'undefined' ? navigator.userAgent : ''))
+  const isMobile = isMobileRef.current
+
+  // 디버그 로그 추가 함수
+  const addDebugLogRef = useRef<(type: 'log' | 'error' | 'warn' | 'info', message: string) => void>()
+  addDebugLogRef.current = (type: 'log' | 'error' | 'warn' | 'info', message: string) => {
+    const logMessage = typeof message === 'string' ? message : JSON.stringify(message, null, 2)
+    setDebugLogs(prev => [...prev.slice(-49), { type, message: logMessage, timestamp: new Date() }])
+  }
+
+  // 콘솔 가로채기 설정
+  useEffect(() => {
+    if (!isMobileRef.current) return
+
+    const addDebugLog = (type: 'log' | 'error' | 'warn' | 'info', message: string) => {
+      if (addDebugLogRef.current) {
+        addDebugLogRef.current(type, message)
+      }
+    }
+
+    const originalLog = console.log
+    const originalError = console.error
+    const originalWarn = console.warn
+    const originalInfo = console.info
+
+    console.log = (...args: any[]) => {
+      originalLog(...args)
+      addDebugLog('log', args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : String(arg)).join(' '))
+    }
+
+    console.error = (...args: any[]) => {
+      originalError(...args)
+      addDebugLog('error', args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : String(arg)).join(' '))
+    }
+
+    console.warn = (...args: any[]) => {
+      originalWarn(...args)
+      addDebugLog('warn', args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : String(arg)).join(' '))
+    }
+
+    console.info = (...args: any[]) => {
+      originalInfo(...args)
+      addDebugLog('info', args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : String(arg)).join(' '))
+    }
+
+    // 에러 이벤트 리스너
+    const handleError = (event: ErrorEvent) => {
+      addDebugLog('error', `Error: ${event.message} at ${event.filename}:${event.lineno}`)
+    }
+
+    const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
+      addDebugLog('error', `Unhandled Promise Rejection: ${event.reason}`)
+    }
+
+    window.addEventListener('error', handleError)
+    window.addEventListener('unhandledrejection', handleUnhandledRejection)
+
+    return () => {
+      console.log = originalLog
+      console.error = originalError
+      console.warn = originalWarn
+      console.info = originalInfo
+      window.removeEventListener('error', handleError)
+      window.removeEventListener('unhandledrejection', handleUnhandledRejection)
+    }
+  }, [isMobile])
 
   useEffect(() => {
     if (tokenParam) {
@@ -106,12 +174,20 @@ export default function CheckInPage({
         ? { facingMode: 'environment' }
         : (typeof cameraIdOrConfig === 'string' ? cameraIdOrConfig : { facingMode: 'environment' })
 
-      console.log('Starting scanner with config:', { cameraConfig, isIOS, qrboxSize })
+      const configLog = { cameraConfig, isIOS, qrboxSize }
+      console.log('Starting scanner with config:', configLog)
+      if (addDebugLogRef.current) {
+        addDebugLogRef.current('info', `스캐너 시작: ${JSON.stringify(configLog)}`)
+      }
 
       // 타임아웃 설정 (10초)
       const timeoutId = setTimeout(() => {
         if (!scannerStartedRef.current) {
-          console.error('Scanner start timeout')
+          const timeoutMsg = 'Scanner start timeout'
+          console.error(timeoutMsg)
+          if (addDebugLogRef.current) {
+            addDebugLogRef.current('error', timeoutMsg)
+          }
           setStatus('error')
           setMessage('카메라 시작 시간이 초과되었습니다. 페이지를 새로고침하고 다시 시도해주세요.')
           setIsScanning(false)
@@ -136,8 +212,14 @@ export default function CheckInPage({
       setIsScanning(true)
       scannerStartedRef.current = true
       console.log('Scanner started successfully')
+      if (addDebugLogRef.current) {
+        addDebugLogRef.current('info', '스캐너 시작 성공')
+      }
     } catch (err: any) {
       console.error('Scanner error:', err)
+      if (addDebugLogRef.current) {
+        addDebugLogRef.current('error', `스캐너 에러: ${err.name || 'Unknown'} - ${err.message || JSON.stringify(err)}`)
+      }
       setStatus('error')
       let errorMsg = '카메라를 시작할 수 없습니다.'
       
@@ -236,6 +318,61 @@ export default function CheckInPage({
 
   return (
     <div className="min-h-screen bg-gray-900 flex flex-col items-center justify-center p-4">
+      {/* 디버그 패널 토글 버튼 (모바일에서만 표시) */}
+      {isMobile && (
+        <button
+          onClick={() => setShowDebugPanel(!showDebugPanel)}
+          className="fixed top-4 right-4 z-50 bg-gray-800 text-white px-3 py-2 rounded-lg text-xs shadow-lg"
+        >
+          {showDebugPanel ? '디버그 숨기기' : '디버그 보기'}
+        </button>
+      )}
+
+      {/* 디버그 패널 */}
+      {isMobile && showDebugPanel && (
+        <div className="fixed bottom-0 left-0 right-0 z-40 bg-gray-900 text-white p-4 max-h-64 overflow-y-auto border-t border-gray-700">
+          <div className="flex justify-between items-center mb-2">
+            <h3 className="text-sm font-bold">디버그 로그</h3>
+            <button
+              onClick={() => setDebugLogs([])}
+              className="text-xs bg-red-600 px-2 py-1 rounded"
+            >
+              지우기
+            </button>
+          </div>
+          <div className="space-y-1 text-xs font-mono">
+            {debugLogs.length === 0 ? (
+              <p className="text-gray-500">로그가 없습니다</p>
+            ) : (
+              debugLogs.map((log, index) => (
+                <div
+                  key={index}
+                  className={`p-2 rounded ${
+                    log.type === 'error'
+                      ? 'bg-red-900/50 text-red-200'
+                      : log.type === 'warn'
+                      ? 'bg-yellow-900/50 text-yellow-200'
+                      : log.type === 'info'
+                      ? 'bg-blue-900/50 text-blue-200'
+                      : 'bg-gray-800 text-gray-300'
+                  }`}
+                >
+                  <div className="flex justify-between items-start mb-1">
+                    <span className="font-bold text-xs">
+                      {log.type.toUpperCase()}
+                    </span>
+                    <span className="text-gray-500 text-xs">
+                      {log.timestamp.toLocaleTimeString()}
+                    </span>
+                  </div>
+                  <div className="break-words whitespace-pre-wrap">{log.message}</div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="w-full max-w-2xl">
         <div className="bg-white rounded-lg shadow-xl p-8 mb-6">
           <h1 className="text-3xl font-bold text-center text-gray-900 mb-8">
