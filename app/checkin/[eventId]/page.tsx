@@ -62,17 +62,68 @@ export default function CheckInPage({
 
       // 모바일 환경 감지
       const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
+      const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent)
       const qrboxSize = isMobile ? Math.min(window.innerWidth * 0.8, 300) : 250
+
+      // 카메라 디바이스 선택 (아이폰에서는 facingMode를 직접 사용)
+      let cameraIdOrConfig: string | { facingMode: string } = { facingMode: 'environment' }
+      
+      // 아이폰이 아닌 경우에만 카메라 디바이스 목록 가져오기 시도
+      if (!isIOS) {
+        try {
+          // 카메라 디바이스 목록 가져오기
+          const devices = await Html5Qrcode.getCameras()
+          if (devices && devices.length > 0) {
+            // 후면 카메라 찾기
+            const backCamera = devices.find(device => 
+              device.label.toLowerCase().includes('back') || 
+              device.label.toLowerCase().includes('rear') ||
+              device.label.toLowerCase().includes('environment')
+            )
+            
+            // 후면 카메라가 없으면 첫 번째 카메라 사용
+            cameraIdOrConfig = backCamera?.id || devices[0].id
+            console.log('Using camera:', backCamera?.label || devices[0].label)
+          }
+        } catch (deviceError) {
+          // 디바이스 목록을 가져올 수 없으면 facingMode 사용
+          console.log('Could not get camera devices, using facingMode:', deviceError)
+          cameraIdOrConfig = { facingMode: 'environment' }
+        }
+      } else {
+        console.log('iOS detected, using facingMode directly')
+      }
+
+      // 아이폰 특화 설정
+      const config: any = {
+        fps: isIOS ? 5 : 10, // 아이폰에서는 FPS를 낮춤
+        qrbox: { width: qrboxSize, height: qrboxSize },
+        aspectRatio: 1.0,
+      }
+
+      // 아이폰에서는 facingMode를 직접 사용하는 것이 더 안정적
+      const cameraConfig = isIOS 
+        ? { facingMode: 'environment' }
+        : (typeof cameraIdOrConfig === 'string' ? cameraIdOrConfig : { facingMode: 'environment' })
+
+      console.log('Starting scanner with config:', { cameraConfig, isIOS, qrboxSize })
+
+      // 타임아웃 설정 (10초)
+      const timeoutId = setTimeout(() => {
+        if (!scannerStartedRef.current) {
+          console.error('Scanner start timeout')
+          setStatus('error')
+          setMessage('카메라 시작 시간이 초과되었습니다. 페이지를 새로고침하고 다시 시도해주세요.')
+          setIsScanning(false)
+        }
+      }, 10000)
 
       // Html5Qrcode가 직접 카메라 권한을 요청하도록 함
       await scanner.start(
-        { facingMode: 'environment' },
-        {
-          fps: 10,
-          qrbox: { width: qrboxSize, height: qrboxSize },
-          aspectRatio: 1.0,
-        },
+        cameraConfig,
+        config,
         (decodedText) => {
+          clearTimeout(timeoutId)
           handleCheckIn(extractTokenFromUrl(decodedText))
         },
         (errorMessage) => {
@@ -81,8 +132,10 @@ export default function CheckInPage({
         }
       )
 
+      clearTimeout(timeoutId)
       setIsScanning(true)
       scannerStartedRef.current = true
+      console.log('Scanner started successfully')
     } catch (err: any) {
       console.error('Scanner error:', err)
       setStatus('error')
